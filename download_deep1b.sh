@@ -11,18 +11,23 @@ mkdir -p "${dest_dir}"
 
 base_url="https://storage.yandexcloud.net/yandex-research/ann-datasets/DEEP"
 files=(
-  # "base.10M.fbin"
+  "base.10M.fbin"
   "base.1B.fbin"
-  # "query.public.10K.fbin"
-  # "groundtruth.public.10K.ibin"
+  "query.public.10K.fbin"
+  "groundtruth.public.10K.ibin"
 )
 
 for filename in "${files[@]}"; do
   aria2c \
     -x 16 \
     -s 16 \
-    -k 16M \
+    -k 64M \
     -c \
+    --file-allocation=none \
+    --allow-overwrite=false \
+    --auto-file-renaming=false \
+    --min-split-size=64M \
+    --console-log-level=notice \
     -d "${dest_dir}" \
     "${base_url}/${filename}"
 done

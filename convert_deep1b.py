@@ -69,31 +69,45 @@ def chunked_write_train(h5f, base_mmap, chunk_rows):
 
 def write_neighbors_and_distances(h5f, query, base_mmap, neighbors):
     num_queries = query.shape[0]
-    neighbor_dtype = h5py.vlen_dtype(np.int32)
-    distance_dtype = h5py.vlen_dtype(np.float32)
-    neighbors_ds = h5f.create_dataset("neighbors", shape=(num_queries,), dtype=neighbor_dtype)
-    distances_ds = h5f.create_dataset("distances", shape=(num_queries,), dtype=distance_dtype)
+    top_k = neighbors.shape[1]
+    neighbors_ds = h5f.create_dataset(
+        "neighbors",
+        shape=(num_queries, top_k),
+        dtype=np.int32,
+    )
+    distances_ds = h5f.create_dataset(
+        "distances",
+        shape=(num_queries, top_k),
+        dtype=np.float32,
+    )
 
-    zero_neighbor_queries = 0
+    oob_count = 0
+    oob_queries = 0
     for i in tqdm(range(num_queries), desc="Writing /neighbors and /distances"):
-        neighbor_row = neighbors[i]
+        neighbor_row = neighbors[i].astype(np.int32, copy=False)
         valid_mask = neighbor_row < base_mmap.shape[0]
-        valid_neighbors = neighbor_row[valid_mask].astype(np.int32, copy=False)
-        if valid_neighbors.size == 0:
-            zero_neighbor_queries += 1
-            neighbors_ds[i] = np.array([], dtype=np.int32)
-            distances_ds[i] = np.array([], dtype=np.float32)
-            continue
+        valid_neighbors = neighbor_row[valid_mask]
 
-        neighbor_vectors = base_mmap[valid_neighbors]
-        diff = neighbor_vectors - query[i]
-        distances = np.einsum("ij,ij->i", diff, diff, dtype=np.float32)
-        neighbors_ds[i] = valid_neighbors
-        distances_ds[i] = distances.astype(np.float32, copy=False)
+        neighbors_out = np.full(top_k, -1, dtype=np.int32)
+        distances_out = np.full(top_k, np.inf, dtype=np.float32)
 
-    if zero_neighbor_queries:
+        if valid_neighbors.size:
+            neighbor_vectors = base_mmap[valid_neighbors]
+            diff = neighbor_vectors - query[i]
+            distances = np.einsum("ij,ij->i", diff, diff, dtype=np.float32)
+            neighbors_out[valid_mask] = valid_neighbors
+            distances_out[valid_mask] = distances.astype(np.float32, copy=False)
+
+        oob_in_row = int((~valid_mask).sum())
+        if oob_in_row:
+            oob_queries += 1
+            oob_count += oob_in_row
+        neighbors_ds[i] = neighbors_out
+        distances_ds[i] = distances_out
+
+    if oob_count:
         print(
-            f"ERROR: {zero_neighbor_queries} queries had 0 valid neighbors after filtering.",
+            f"ERROR: {oob_queries} queries had {oob_count} neighbors out of bounds (set to -1).",
             file=sys.stderr,
         )
 
